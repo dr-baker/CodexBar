@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Exercise fork updates with contained Git repositories and fake app bundles."""
 
+import http.server
+import json
 import os
 import plistlib
 import re
@@ -8,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -16,6 +19,25 @@ ROOT = Path(__file__).resolve().parent.parent
 UPDATE_SCRIPT = ROOT / "Scripts/update_fork.sh"
 WORKFLOW = ROOT / ".github/workflows/fork-sync.yml"
 REAL_GIT = shutil.which("git")
+REAL_GH = shutil.which("gh")
+
+
+def pr_record(owner="dr-baker", repository="CodexBar", number=1):
+    return {
+        "url": f"https://github.com/dr-baker/CodexBar/pull/{number}",
+        "headRepository": {
+            "id": "fixture-repository",
+            "name": repository,
+            "nameWithOwner": f"{owner}/{repository}",
+        },
+        "headRepositoryOwner": {"id": "fixture-owner", "name": "Fixture", "login": owner},
+    }
+
+
+FOREIGN_PRS = [
+    pr_record(owner="other-fork", number=99),
+    pr_record(repository="OtherRepository", number=98),
+]
 
 
 def write_app(app, label="new", feed=""):
@@ -75,6 +97,7 @@ class ForkFixture(unittest.TestCase):
             PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
             TEST_GIT_LOG=str(self.git_log),
             TEST_GH_LOG=str(self.gh_log),
+            TEST_GH_RESPONSE=str(self.directory / "gh-response.json"),
             GITHUB_REPOSITORY="dr-baker/CodexBar",
             GITHUB_SERVER_URL="https://github.com",
             GITHUB_RUN_ID="1234",
@@ -155,13 +178,29 @@ class ForkFixture(unittest.TestCase):
         )
         self.stub(
             "gh",
-            '#!/bin/bash\nset -euo pipefail\n'
-            'printf "%s\\n" "$*" >> "$TEST_GH_LOG"\n'
-            'case "$1 $2" in\n'
-            '  "pr list") printf "%s" "${MOCK_PR_URL:-}" ;;\n'
-            '  "pr create") echo https://github.com/dr-baker/CodexBar/pull/1 ;;\n'
-            '  "pr edit"|"auth setup-git") ;;\n'
-            '  *) exit 99 ;;\nesac\n',
+            '#!/usr/bin/env python3\n'
+            'import json, os, subprocess, sys\nfrom pathlib import Path\n'
+            'args = sys.argv[1:]\n'
+            'with open(os.environ["TEST_GH_LOG"], "a") as log:\n'
+            '    log.write(" ".join(args) + "\\n")\n'
+            'if args[:2] == ["pr", "list"]:\n'
+            '    for flag, expected in [("--repo", "dr-baker/CodexBar"), '
+            '("--base", "main"), ("--head", "fork/upstream-sync")]:\n'
+            '        assert args[args.index(flag) + 1] == expected\n'
+            '    fields = args[args.index("--json") + 1].split(",")\n'
+            '    prs = json.loads(os.environ.get("MOCK_PRS_JSON", "[]"))\n'
+            '    response = [{field: pr.get(field) for field in fields} for pr in prs]\n'
+            '    Path(os.environ["TEST_GH_RESPONSE"]).write_text(json.dumps(response))\n'
+            '    expression = args[args.index("--jq") + 1]\n'
+            '    command = [os.environ["TEST_REAL_GH"], "api", os.environ["TEST_GH_API_URL"], '
+            '"--method", "GET", "--jq", expression]\n'
+            '    env = dict(os.environ, GH_TOKEN="contained-test", '
+            'GH_CONFIG_DIR=os.environ["TEST_GH_CONFIG"], GH_PROMPT_DISABLED="1")\n'
+            '    sys.exit(subprocess.run(command, env=env).returncode)\n'
+            'elif args[:2] == ["pr", "create"]:\n'
+            '    print("https://github.com/dr-baker/CodexBar/pull/1")\n'
+            'elif args[:2] not in [["pr", "edit"], ["auth", "setup-git"]]:\n'
+            '    sys.exit(99)\n',
         )
         for name in ("open", "pkill", "security"):
             self.stub(name, '#!/bin/bash\necho "Unexpected live command" >&2\nexit 99\n')
@@ -215,7 +254,43 @@ class ForkFixture(unittest.TestCase):
             env=dict(self.env, **overrides), capture_output=True, text=True,
         )
 
+    def start_gh_api(self):
+        if "TEST_GH_API_URL" in self.env:
+            return
+        if REAL_GH is None:
+            self.skipTest("GitHub CLI is needed to evaluate the workflow's jq expression.")
+        response = self.directory / "gh-response.json"
+
+        class ResponseHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = response.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ResponseHandler)
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+        thread.start()
+
+        def stop_server():
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+        self.addCleanup(stop_server)
+        self.env.update(
+            TEST_REAL_GH=REAL_GH,
+            TEST_GH_API_URL=f"http://127.0.0.1:{server.server_port}/prs",
+            TEST_GH_CONFIG=str(self.directory / "gh-config"),
+        )
+
     def prepare(self, **overrides):
+        self.start_gh_api()
         if "upstream" in self.git("remote").stdout.splitlines():
             self.git("remote", "remove", "upstream")
         self.output = self.directory / "outputs"
@@ -232,6 +307,7 @@ class ForkFixture(unittest.TestCase):
         return result, outputs
 
     def publish(self, outputs, **overrides):
+        self.start_gh_api()
         return subprocess.run(
             ["bash", "-c", workflow_run("Publish one upstream sync PR")], cwd=self.repo,
             env=dict(self.env, BASE_SHA=outputs["base_sha"], UPSTREAM_SHA=outputs["upstream_sha"],
@@ -424,11 +500,27 @@ class SyncWorkflowTests(ForkFixture):
         candidate = self.git("rev-parse", "HEAD").stdout.strip()
         self.git("push", str(self.fork), "HEAD:refs/heads/fork/upstream-sync")
         self.git("reset", "--hard", self.base)
-        result, outputs = self.prepare(MOCK_PR_URL="https://github.com/dr-baker/CodexBar/pull/1")
+        result, outputs = self.prepare(MOCK_PRS_JSON=json.dumps(FOREIGN_PRS + [pr_record()]))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(outputs, {"changed": "false"})
         self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), candidate)
         self.assertNotRegex(self.gh_log.read_text(), r"(?m)^pr (create|edit) ")
+        self.assertIn("/pull/1)", self.summary.read_text())
+        self.assertNotIn("/pull/99)", self.summary.read_text())
+        self.assertNotIn("/pull/98)", self.summary.read_text())
+
+    def test_existing_candidate_does_not_skip_for_foreign_prs_only(self):
+        self.advance_remote(self.upstream)
+        result, _ = self.prepare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        candidate = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("push", str(self.fork), "HEAD:refs/heads/fork/upstream-sync")
+        self.git("reset", "--hard", self.base)
+        result, outputs = self.prepare(MOCK_PRS_JSON=json.dumps(FOREIGN_PRS))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(outputs["changed"], "true")
+        self.assertEqual(outputs["existing_sha"], candidate)
+        self.assertNotIn("existing [upstream sync PR]", self.summary.read_text())
 
     def test_publish_refuses_main_changes_and_sync_branch_races(self):
         self.advance_remote(self.upstream)
@@ -453,14 +545,26 @@ class SyncWorkflowTests(ForkFixture):
         self.assertEqual(len(re.findall(r"(?m)^pr create ", log)), 1)
         self.assertEqual(len(re.findall(r"(?m)^pr edit ", log)), 0)
         outputs["existing_sha"] = self.git("rev-parse", "HEAD").stdout.strip()
-        result = self.publish(outputs, MOCK_PR_URL="https://github.com/dr-baker/CodexBar/pull/1")
+        result = self.publish(outputs, MOCK_PRS_JSON=json.dumps(FOREIGN_PRS + [pr_record()]))
         self.assertEqual(result.returncode, 0, result.stderr)
         log = self.gh_log.read_text()
         self.assertEqual(len(re.findall(r"(?m)^pr create ", log)), 1)
         self.assertEqual(len(re.findall(r"(?m)^pr edit ", log)), 1)
+        self.assertIn("pr edit https://github.com/dr-baker/CodexBar/pull/1 ", log)
+        self.assertNotRegex(log, r"(?m)^pr edit https://github.com/dr-baker/CodexBar/pull/(98|99) ")
         body = (self.directory / "fork-sync-pr.md").read_text()
         self.assertIn("make check, and make test", body)
         self.assertIn(outputs["upstream_sha"], body)
+
+    def test_publish_creates_own_pr_instead_of_editing_a_foreign_pr(self):
+        self.advance_remote(self.upstream)
+        result, outputs = self.prepare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.publish(outputs, MOCK_PRS_JSON=json.dumps(FOREIGN_PRS))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = self.gh_log.read_text()
+        self.assertEqual(len(re.findall(r"(?m)^pr create ", log)), 1)
+        self.assertNotRegex(log, r"(?m)^pr edit ")
 
 
 if __name__ == "__main__":

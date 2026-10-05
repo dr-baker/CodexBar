@@ -76,7 +76,8 @@ jobs:
             && [[ "$(git rev-parse "$existing_sha^{tree}")" == "$(git rev-parse 'HEAD^{tree}')" ]]; then
             git checkout --detach "$existing_sha"
             pr_url=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
-              --base main --head "$SYNC_BRANCH" --json url --jq '.[0].url // empty')
+              --base main --head "$SYNC_BRANCH" --json url,headRepository,headRepositoryOwner \
+              --jq '[.[] | select(.headRepository.name == "CodexBar" and .headRepositoryOwner.login == "dr-baker")][0].url // empty')
             if [[ -n "$pr_url" ]]; then
               echo 'changed=false' >> "$GITHUB_OUTPUT"
               printf 'The existing [upstream sync PR](%s) already contains this update.\n' "$pr_url" \
@@ -165,7 +166,8 @@ jobs:
           Review this update, approve any queued CI workflows, and use **Create a merge commit** to land it.
           EOF
           pr_url=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
-            --base main --head "$SYNC_BRANCH" --json url --jq '.[0].url // empty')
+            --base main --head "$SYNC_BRANCH" --json url,headRepository,headRepositoryOwner \
+            --jq '[.[] | select(.headRepository.name == "CodexBar" and .headRepositoryOwner.login == "dr-baker")][0].url // empty')
           if [[ -n "$pr_url" ]]; then
             gh pr edit "$pr_url" --repo "$GITHUB_REPOSITORY" \
               --title 'Merge upstream CodexBar updates' --body-file "$body_file"
