@@ -693,10 +693,12 @@ extension UsageMenuCardView.Model {
 
 struct InlineUsageDashboardContent: View {
     private let model: InlineUsageDashboardModel
+    private let showsDetails: Bool
     @Environment(\.menuItemHighlighted) private var isHighlighted
 
-    init(model: InlineUsageDashboardModel) {
+    init(model: InlineUsageDashboardModel, showsDetails: Bool = true) {
         self.model = model
+        self.showsDetails = showsDetails
     }
 
     var body: some View {
@@ -708,10 +710,12 @@ struct InlineUsageDashboardContent: View {
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel(self.model.accessibilityLabel)
             }
-            if !self.model.quotaWindows.isEmpty {
-                self.quotaWindows
+            if self.showsDetails {
+                if !self.model.quotaWindows.isEmpty {
+                    self.quotaWindows
+                }
+                self.detailLines
             }
-            self.detailLines
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
