@@ -59,7 +59,8 @@ struct OverviewMenuCardRowView: View {
                         bottomPadding: 6,
                         width: self.width,
                         showsSectionDividers: Self.showsSectionDividers,
-                        compactMetrics: self.layout == .compact)
+                        compactMetrics: self.layout == .compact,
+                        showsCodexResetCreditsInUsage: true)
                 }
             }
             if let storageText {
@@ -83,7 +84,7 @@ struct OverviewMenuCardRowView: View {
     }
 
     private var hasUsageBlock: Bool {
-        self.model.hasUsageContent
+        self.model.hasUsageContent || (self.model.provider == .codex && self.model.limitResetCredits != nil)
     }
 }
 

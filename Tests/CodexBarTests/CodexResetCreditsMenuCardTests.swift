@@ -43,7 +43,8 @@ struct CodexResetCreditsMenuCardTests {
         #expect(presentation.text == "1 available")
         #expect(presentation.items.map(\.expiryText) == ["No expiry"])
         #expect(presentation.expirySummaryText == "No expiry")
-        #expect(model.hasUsageContent)
+        #expect(model.hasCreditsSection)
+        #expect(!model.hasUsageContent)
     }
 
     @Test

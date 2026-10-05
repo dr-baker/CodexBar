@@ -183,6 +183,7 @@ struct UsageMenuCardView: View {
         let inlineUsageDashboard: InlineUsageDashboardModel?
         var creditsText: String?
         var creditsRemaining: Double?
+        var creditsRepeatExtraUsageBalance = false
         var creditsShowProgress = true
         var creditsProgressPercent: Double?, creditsScaleText: String?
         var creditsHintText: String?
@@ -224,7 +225,7 @@ struct UsageMenuCardView: View {
 
             if !liveModel.usesStackedDetailLayout {
                 if let dashboard = liveModel.inlineUsageDashboard {
-                    InlineUsageDashboardContent(model: dashboard)
+                    InlineUsageDashboardContent(model: dashboard, showsDetails: liveModel.provider != .codex)
                 } else if !liveModel.usageNotes.isEmpty {
                     UsageNotesContent(notes: liveModel.usageNotes)
                 } else if let placeholder = liveModel.placeholder {
@@ -240,8 +241,8 @@ struct UsageMenuCardView: View {
                 }
             } else {
                 let hasUsage = liveModel.hasUsageContent
-                let hasCredits = liveModel.creditsText != nil
-                let hasProviderCost = liveModel.providerCost != nil
+                let hasCredits = liveModel.hasCreditsSection
+                let hasProviderCost = liveModel.provider != .codex && liveModel.providerCost != nil
                 let hasCost = liveModel.tokenUsage != nil || hasProviderCost
 
                 VStack(alignment: .leading, spacing: 12) {
@@ -254,7 +255,9 @@ struct UsageMenuCardView: View {
                     if hasUsage, !liveModel.creditsOnlyInlineUsageDashboard, hasCredits || hasCost {
                         Divider()
                     }
-                    if let credits = liveModel.creditsText {
+                    if liveModel.provider == .codex, liveModel.hasCreditsSection {
+                        CodexCreditsContent(model: liveModel)
+                    } else if let credits = liveModel.creditsText {
                         CreditsBarContent(
                             creditsText: credits,
                             showsProgress: liveModel.creditsShowProgress,
@@ -265,12 +268,12 @@ struct UsageMenuCardView: View {
                             progressColor: liveModel.progressColor)
                     }
                     if liveModel.creditsOnlyInlineUsageDashboard, let dashboard = liveModel.inlineUsageDashboard {
-                        InlineUsageDashboardContent(model: dashboard)
+                        InlineUsageDashboardContent(model: dashboard, showsDetails: liveModel.provider != .codex)
                     }
                     if hasCredits, hasCost {
                         Divider()
                     }
-                    if let providerCost = liveModel.providerCost {
+                    if hasProviderCost, let providerCost = liveModel.providerCost {
                         ProviderCostContent(
                             section: providerCost,
                             progressColor: liveModel.progressColor)
@@ -589,6 +592,7 @@ private struct UsageMenuCardUsageContentView: View {
     let showBottomDivider: Bool
     var showsSectionDividers = true
     var compactMetrics = false
+    var showsCodexResetCreditsInUsage = false
     @Environment(\.menuItemHighlighted) private var isHighlighted
 
     /// Doubao ships Coding Plan and Agent Plan subscriptions, each with personal
@@ -638,7 +642,9 @@ private struct UsageMenuCardUsageContentView: View {
             } else {
                 self.metricRows(self.model.metrics)
             }
-            if let resetCredits = self.model.limitResetCredits {
+            if self.model.provider != .codex || self.showsCodexResetCreditsInUsage,
+               let resetCredits = self.model.limitResetCredits
+            {
                 if !self.model.metrics.isEmpty, self.showsSectionDividers {
                     Divider()
                 }
@@ -664,8 +670,8 @@ private struct UsageMenuCardUsageContentView: View {
     @ViewBuilder
     private var supplementalContent: some View {
         if let dashboard = self.model.inlineUsageDashboard {
-            InlineUsageDashboardContent(model: dashboard)
-            if !self.model.subscriptionNotes.isEmpty {
+            InlineUsageDashboardContent(model: dashboard, showsDetails: self.model.provider != .codex)
+            if self.model.provider != .codex, !self.model.subscriptionNotes.isEmpty {
                 UsageNotesContent(notes: self.model.subscriptionNotes)
             }
         } else if !self.model.usageNotes.isEmpty {
@@ -693,6 +699,7 @@ struct UsageMenuCardUsageSectionView: View {
     let width: CGFloat
     var showsSectionDividers = true
     var compactMetrics = false
+    var showsCodexResetCreditsInUsage = false
     @Environment(\.menuCardRefreshMonitor) private var refreshMonitor
 
     var body: some View {
@@ -702,7 +709,8 @@ struct UsageMenuCardUsageSectionView: View {
             layoutModel: self.layoutModel,
             showBottomDivider: self.showBottomDivider,
             showsSectionDividers: self.showsSectionDividers,
-            compactMetrics: self.compactMetrics)
+            compactMetrics: self.compactMetrics,
+            showsCodexResetCreditsInUsage: self.showsCodexResetCreditsInUsage)
             .padding(.horizontal, UsageMenuCardLayout.horizontalPadding)
             .padding(.top, UsageMenuCardLayout.usageSectionTopPadding)
             .padding(.bottom, self.bottomPadding)
@@ -725,16 +733,20 @@ struct UsageMenuCardCreditsSectionView: View {
 
     var body: some View {
         let liveModel = self.liveModel
-        if let credits = liveModel.creditsText {
+        if liveModel.hasCreditsSection {
             VStack(alignment: .leading, spacing: 6) {
-                CreditsBarContent(
-                    creditsText: credits,
-                    showsProgress: liveModel.creditsShowProgress,
-                    progressPercent: liveModel.creditsProgressPercent,
-                    scaleText: liveModel.creditsScaleText,
-                    hintText: liveModel.creditsHintText,
-                    hintCopyText: liveModel.creditsHintCopyText,
-                    progressColor: liveModel.progressColor)
+                if liveModel.provider == .codex {
+                    CodexCreditsContent(model: liveModel)
+                } else if let credits = liveModel.creditsText {
+                    CreditsBarContent(
+                        creditsText: credits,
+                        showsProgress: liveModel.creditsShowProgress,
+                        progressPercent: liveModel.creditsProgressPercent,
+                        scaleText: liveModel.creditsScaleText,
+                        hintText: liveModel.creditsHintText,
+                        hintCopyText: liveModel.creditsHintCopyText,
+                        progressColor: liveModel.progressColor)
+                }
                 if self.showBottomDivider {
                     Divider()
                 }
@@ -752,20 +764,23 @@ struct UsageMenuCardCreditsSectionView: View {
     }
 }
 
-private struct CreditsBarContent: View {
+struct CreditsBarContent: View {
     let creditsText: String
     let showsProgress: Bool
     var progressPercent: Double?, scaleText: String?
     let hintText: String?
     let hintCopyText: String?
     let progressColor: Color
+    var showsTitle = true
     @Environment(\.menuItemHighlighted) private var isHighlighted
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(L("Credits"))
-                .font(.body)
-                .fontWeight(.medium)
+            if self.showsTitle {
+                Text(L("Credits"))
+                    .font(.body)
+                    .fontWeight(.medium)
+            }
             if self.showsProgress, let progressPercent {
                 UsageProgressBar(
                     percent: min(100, max(0, progressPercent)),
@@ -939,6 +954,8 @@ extension UsageMenuCardView.Model {
             inlineUsageDashboard: inlineUsageDashboard,
             creditsText: creditsText,
             creditsRemaining: input.credits?.displayRemaining,
+            creditsRepeatExtraUsageBalance: input.provider == .codex && creditsText != nil &&
+                Self.creditsRepeatExtraUsageBalance(credits: input.credits, cost: extraUsageCost),
             creditsShowProgress: input.credits?.hasWorkspaceBalance != true,
             creditsProgressPercent: creditsProgressPercent,
             creditsScaleText: creditsScaleText,

@@ -361,7 +361,7 @@ extension UsageMenuCardView.Model {
             !self.providerDetails.isEmpty ||
             self.openAIAPIUsage != nil ||
             self.inlineUsageDashboard != nil ||
-            self.limitResetCredits != nil ||
+            (self.provider != .codex && self.limitResetCredits != nil) ||
             self.cloudCredits != nil ||
             self.placeholder != nil
     }
@@ -426,6 +426,7 @@ extension UsageMenuCardView.Model {
               self.usageNotes == candidate.usageNotes,
               self.providerDetails == candidate.providerDetails,
               (self.openAIAPIUsage == nil) == (candidate.openAIAPIUsage == nil),
+              self.creditsRepeatExtraUsageBalance == candidate.creditsRepeatExtraUsageBalance,
               self.creditsShowProgress == candidate.creditsShowProgress,
               Self.hasCompatibleCreditsLayout(
                   currentText: self.creditsText,
