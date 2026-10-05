@@ -1,0 +1,176 @@
+name: Sync fork with upstream
+
+on:
+  schedule:
+    - cron: '17 9 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: fork-upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    if: ${{ github.repository == 'dr-baker/CodexBar' }}
+    runs-on: macos-26
+    timeout-minutes: 240
+    env:
+      SYNC_BRANCH: fork/upstream-sync
+    steps:
+      - name: Check out customized main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare upstream merge
+        id: merge
+        env:
+          GH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
+          HAS_SYNC_TOKEN: ${{ secrets.FORK_SYNC_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/steipete/CodexBar.git
+          git fetch --no-tags upstream '+refs/heads/main:refs/remotes/upstream/main'
+          base_sha=$(git rev-parse HEAD)
+          upstream_sha=$(git rev-parse upstream/main)
+          if git merge-base --is-ancestor "$upstream_sha" "$base_sha"; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'The fork already includes upstream main.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          existing_sha=''
+          if git ls-remote --exit-code origin "refs/heads/$SYNC_BRANCH" > /dev/null; then
+            git fetch --no-tags origin "+refs/heads/$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH"
+            existing_sha=$(git rev-parse "origin/$SYNC_BRANCH")
+          else
+            status=$?
+            if [[ "$status" != 2 ]]; then
+              echo '::error::Could not inspect the existing sync branch.'
+              exit "$status"
+            fi
+          fi
+
+          if ! git merge --no-ff "$upstream_sha" -m 'Merge upstream CodexBar updates'; then
+            {
+              printf '## Upstream merge needs manual resolution\n\n'
+              printf 'Conflicting paths:\n\n```text\n'
+              git diff --name-only --diff-filter=U
+              printf '```\n\nNo sync branch or pull request was updated.\n'
+            } >> "$GITHUB_STEP_SUMMARY"
+            git merge --abort
+            echo '::error::Upstream merge failed. Resolve the conflicts on a separate branch; see docs/fork-maintenance.md.'
+            exit 1
+          fi
+
+          if [[ -n "$existing_sha" ]] \
+            && [[ "$(git show -s --format=%P "$existing_sha")" == "$base_sha $upstream_sha" ]] \
+            && [[ "$(git rev-parse "$existing_sha^{tree}")" == "$(git rev-parse 'HEAD^{tree}')" ]]; then
+            git checkout --detach "$existing_sha"
+            pr_url=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+              --base main --head "$SYNC_BRANCH" --json url --jq '.[0].url // empty')
+            if [[ -n "$pr_url" ]]; then
+              echo 'changed=false' >> "$GITHUB_OUTPUT"
+              printf 'The existing [upstream sync PR](%s) already contains this update.\n' "$pr_url" \
+                >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          fi
+          if [[ "${HAS_SYNC_TOKEN:-false}" != true ]] \
+            && [[ -n "$(git diff --name-only "$base_sha" HEAD -- .github/workflows)" ]]; then
+            echo '::error::This update changes GitHub workflows. Add FORK_SYNC_TOKEN with Workflows write permission; see docs/fork-maintenance.md. Nothing was published.'
+            echo 'Upstream changed workflow files. Configure the FORK_SYNC_TOKEN repository secret before publishing this update.' \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          {
+            echo 'changed=true'
+            echo "base_sha=$base_sha"
+            echo "upstream_sha=$upstream_sha"
+            echo "existing_sha=$existing_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Select Xcode 26.6
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+          echo 'DEVELOPER_DIR=/Applications/Xcode_26.6.app/Contents/Developer' >> "$GITHUB_ENV"
+          [[ "$(/usr/bin/xcodebuild -version)" == Xcode\ 26.6* ]]
+          swift --version
+
+      - name: Restore SwiftPM build cache
+        if: steps.merge.outputs.changed == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: fork-sync-macos26-xcode26.6-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: |
+            fork-sync-macos26-xcode26.6-
+
+      # GITHUB_TOKEN-created PRs do not run CI without approval. Validate here
+      # before publishing instead of depending on a second workflow starting.
+      - name: Check and test the merge
+        if: steps.merge.outputs.changed == 'true'
+        timeout-minutes: 180
+        env:
+          CODEXBAR_TEST_GROUP_SIZE: 8
+          CODEXBAR_TEST_SUITE_TIMEOUT: 120
+          CODEXBAR_TEST_RETRY_NON_TIMEOUT_FAILURES: 0
+        run: |
+          set -euo pipefail
+          python3 Scripts/test_update_fork.py
+          make check
+          make test
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - name: Publish one upstream sync PR
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
+          BASE_SHA: ${{ steps.merge.outputs.base_sha }}
+          UPSTREAM_SHA: ${{ steps.merge.outputs.upstream_sha }}
+          EXISTING_SHA: ${{ steps.merge.outputs.existing_sha }}
+        run: |
+          set -euo pipefail
+          current_main=$(git ls-remote origin refs/heads/main | awk '{print $1}')
+          if [[ "$current_main" != "$BASE_SHA" ]]; then
+            echo '::error::Fork main changed during validation. Run this workflow again; nothing was published.'
+            exit 1
+          fi
+          gh auth setup-git
+          git push --force-with-lease="refs/heads/$SYNC_BRANCH:$EXISTING_SHA" \
+            origin "HEAD:refs/heads/$SYNC_BRANCH"
+
+          body_file="$RUNNER_TEMP/fork-sync-pr.md"
+          cat > "$body_file" <<EOF
+          Merge steipete/CodexBar main into the customized fork with a merge commit.
+
+          - Fork base: $BASE_SHA
+          - Upstream: $UPSTREAM_SHA
+          - Validation: fork update script tests, make check, and make test on macOS 26 with Xcode 26.6.
+          - [Validation run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
+
+          Review this update, approve any queued CI workflows, and use **Create a merge commit** to land it.
+          EOF
+          pr_url=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+            --base main --head "$SYNC_BRANCH" --json url --jq '.[0].url // empty')
+          if [[ -n "$pr_url" ]]; then
+            gh pr edit "$pr_url" --repo "$GITHUB_REPOSITORY" \
+              --title 'Merge upstream CodexBar updates' --body-file "$body_file"
+          else
+            pr_url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$SYNC_BRANCH" \
+              --title 'Merge upstream CodexBar updates' --body-file "$body_file")
+          fi
+          printf '[Review the upstream sync PR](%s).\n' "$pr_url" >> "$GITHUB_STEP_SUMMARY"
