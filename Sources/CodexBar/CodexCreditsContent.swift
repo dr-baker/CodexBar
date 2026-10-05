@@ -32,9 +32,18 @@ struct CodexCreditsContent: View {
 }
 
 extension UsageMenuCardView.Model {
+    /// Provider-specific by design: Codex groups reset inventory and extra usage with purchased credits.
+    var groupsCodexCredits: Bool {
+        self.provider == .codex
+    }
+
+    var inlineUsageDashboardShowsDetails: Bool {
+        !self.groupsCodexCredits
+    }
+
     var hasCreditsSection: Bool {
         self.creditsText != nil ||
-            (self.provider == .codex && (self.limitResetCredits != nil || self.providerCost != nil))
+            (self.groupsCodexCredits && (self.limitResetCredits != nil || self.providerCost != nil))
     }
 
     static func creditsRepeatExtraUsageBalance(credits: CreditsSnapshot?, cost: ProviderCostSnapshot?) -> Bool {
@@ -48,7 +57,7 @@ extension UsageMenuCardView.Model {
     }
 
     var groupedCodexProviderCost: ProviderCostSection? {
-        guard self.provider == .codex, var cost = self.providerCost else { return nil }
+        guard self.groupsCodexCredits, var cost = self.providerCost else { return nil }
         // A balance-only Extra usage row repeats the purchased-credit balance already drawn above.
         if self.creditsRepeatExtraUsageBalance, cost.percentUsed == nil { return nil }
         if self.creditsRepeatExtraUsageBalance { cost.balanceLine = nil }

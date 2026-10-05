@@ -84,7 +84,7 @@ struct OverviewMenuCardRowView: View {
     }
 
     private var hasUsageBlock: Bool {
-        self.model.hasUsageContent || (self.model.provider == .codex && self.model.limitResetCredits != nil)
+        self.model.hasUsageContent || (self.model.groupsCodexCredits && self.model.limitResetCredits != nil)
     }
 }
 

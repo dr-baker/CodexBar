@@ -361,7 +361,7 @@ extension UsageMenuCardView.Model {
             !self.providerDetails.isEmpty ||
             self.openAIAPIUsage != nil ||
             self.inlineUsageDashboard != nil ||
-            (self.provider != .codex && self.limitResetCredits != nil) ||
+            (!self.groupsCodexCredits && self.limitResetCredits != nil) ||
             self.cloudCredits != nil ||
             self.placeholder != nil
     }
