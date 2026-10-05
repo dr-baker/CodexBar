@@ -42,3 +42,20 @@ extension CostUsageScanner.ClaudeUsageRow {
         self.isIncomplete = try values.decodeIfPresent(Bool.self, forKey: .isIncomplete)
     }
 }
+
+extension KeyedDecodingContainer {
+    /// Synthesis selects this overload for retained Claude rows; keep optional-key semantics unchanged.
+    func decodeIfPresent(
+        _ type: [CostUsageScanner.ClaudeUsageRow].Type,
+        forKey key: Key) throws -> [CostUsageScanner.ClaudeUsageRow]?
+    {
+        guard self.contains(key), try !self.decodeNil(forKey: key) else { return nil }
+        var values = try self.nestedUnkeyedContainer(forKey: key)
+        var rows: [CostUsageScanner.ClaudeUsageRow] = []
+        rows.reserveCapacity(values.count ?? 0)
+        while !values.isAtEnd {
+            try rows.append(values.decode(CostUsageScanner.ClaudeUsageRow.self))
+        }
+        return rows
+    }
+}

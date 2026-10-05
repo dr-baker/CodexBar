@@ -274,7 +274,7 @@ extension CostUsageScanner {
             parsedBytes = startOffset
         }
 
-        let rows = keyedRows.keys.sorted().compactMap { keyedRows[$0] } + unkeyedRows
+        let rows = Self.orderedClaudeRows(keyed: keyedRows, unkeyed: unkeyedRows)
         return ClaudeParseResult(rows: rows, parsedBytes: parsedBytes)
     }
 
@@ -326,7 +326,20 @@ extension CostUsageScanner {
             }
         }
 
-        return keyedRows.keys.sorted().compactMap { keyedRows[$0] } + unkeyedRows
+        return Self.orderedClaudeRows(keyed: keyedRows, unkeyed: unkeyedRows)
+    }
+
+    private static func orderedClaudeRows(
+        keyed: [ClaudeRowKey: ClaudeUsageRow],
+        unkeyed: [ClaudeUsageRow]) -> [ClaudeUsageRow]
+    {
+        var rows: [ClaudeUsageRow] = []
+        rows.reserveCapacity(keyed.count + unkeyed.count)
+        for key in keyed.keys.sorted() {
+            if let row = keyed[key] { rows.append(row) }
+        }
+        rows.append(contentsOf: unkeyed)
+        return rows
     }
 
     private static func claudeRowWins(
