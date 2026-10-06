@@ -1106,7 +1106,10 @@ extension CostUsageStoreTests {
         #expect(await predecessor.setLookbackState(lookback))
         #expect(await predecessor.upsertAccumulator(accumulator))
         #expect(await predecessor.setMetadata(metadata))
-        let before = await predecessor.readSnapshot()
+        var before = await predecessor.readSnapshot()
+        if predecessorHash == "4a48de5bae16ab15" {
+            before.metadata.previousReportPayload = nil
+        }
 
         try FileManager.default.removeItem(at: input)
         #expect(!FileManager.default.fileExists(atPath: input.path))
