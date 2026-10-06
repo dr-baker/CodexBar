@@ -15,6 +15,8 @@ Local Codex dollar amounts estimate usage at API rates. They do not represent yo
 
 Purchased credits show the reported balance. A progress bar appears only when the provider supplies a monthly limit.
 
+The fork includes the pricing-recovery and duplicate-record repairs from upstream PRs [#4270](https://github.com/steipete/CodexBar/pull/4270) and [#4290](https://github.com/steipete/CodexBar/pull/4290). Existing history reparses in bounded passes; partial totals remain labeled while that runs. Saved unknown-price markers stay unknown because the cache cannot distinguish lost pricing from intentionally invalidated evidence. Rebuilding the derived cost cache from session logs can recover those amounts; `codexbar cache clear --cost` clears cost caches for every provider.
+
 These native menu screenshots use synthetic data over a busy background to check contrast and coverage labels:
 
 ![Dark menu with partial estimates and a reported credit balance](screenshots/codex-fork-menu.png)

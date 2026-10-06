@@ -963,15 +963,20 @@ extension CostUsageScanner {
         }
         let classifiedUniqueRows = Self.codexRowsWithRetainedPricing(
             uniqueRows,
-            source: (
-                sourcePricing, delta.rowSourceEndOffsets, cached.codexPendingSourcePricingAnchor?.indexedBytes),
+            source: (sourcePricing, delta, cached.codexPendingSourcePricingAnchor?.indexedBytes),
             pendingPricing: &pendingPricing,
             sessionId: sessionId,
             priorityTurns: context.resources.priorityTurns)
         context.workRecorder?.record(processed: uniqueRows.count, repriced: classifiedUniqueRows.count)
+        let recoveredCachedRows = Self.codexRowsRecoveringLedgerPricing(
+            retainedCachedRows,
+            pricing: sourcePricing,
+            ledgerLegacyKeys: delta.ledgerLegacyPricingKeys,
+            priorityTurns: context.resources.priorityTurns)
 
         let migratedCached = sessionAlreadyContributed || !delta.replacedLegacyRowIndices.isEmpty
-            ? Self.codexFileUsageByFilteringRows(migrated, rows: retainedCachedRows, context: context)
+            || recoveredCachedRows != retainedCachedRows
+            ? Self.codexFileUsageByFilteringRows(migrated, rows: recoveredCachedRows, context: context)
             : migrated
         if sessionAlreadyContributed, migratedCached.days.isEmpty, uniqueRows.isEmpty {
             Self.dropCachedCodexFile(path: input.metadata.path, cached: cached, cache: &cache)
@@ -1037,7 +1042,7 @@ extension CostUsageScanner {
                 modeTokens.priority),
             codexTurnIDs: Self.mergeCodexTurnIDs(migratedCached.codexTurnIDs, rows: uniqueRows),
             codexRows: Self.mergeCodexRows(
-                retainedCachedRows,
+                recoveredCachedRows,
                 rows: classifiedUniqueRows,
                 sessionId: sessionId),
             codexTokenSnapshots: mergedTokenSnapshots,
@@ -1148,7 +1153,7 @@ extension CostUsageScanner {
             state: &state)
         let uniqueRows = Self.codexRowsWithRetainedPricing(
             parsedUniqueRows,
-            source: (sourcePricing, parsed.rowSourceEndOffsets, sourceAnchor?.indexedBytes),
+            source: (sourcePricing, parsed, sourceAnchor?.indexedBytes),
             pendingPricing: &pendingPricing,
             sessionId: sessionId,
             priorityTurns: context.resources.priorityTurns)
