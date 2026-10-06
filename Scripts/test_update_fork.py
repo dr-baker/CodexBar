@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -247,9 +248,9 @@ class ForkFixture(unittest.TestCase):
         if self.git_log.exists():
             self.assertNotRegex(self.git_log.read_text(), r"(?m)^fetch ")
 
-    def install(self, source, destination, **overrides):
+    def install(self, source, destination, shell="bash", **overrides):
         return subprocess.run(
-            ["bash", "-c", 'source "$1"; install_fork_app "$2" "$3"',
+            [shell, "-c", 'source "$1"; install_fork_app "$2" "$3"',
              "fixture", str(UPDATE_SCRIPT), str(source), str(destination)],
             env=dict(self.env, **overrides), capture_output=True, text=True,
         )
@@ -450,6 +451,12 @@ class InstallTests(ForkFixture):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("symlinked app", result.stderr)
         self.assertEqual((self.app / "Contents/label").read_text(), "new")
+
+
+@unittest.skipUnless(sys.platform == "darwin", "Apple Bash is available on macOS")
+class AppleBashInstallTests(InstallTests):
+    def install(self, source, destination, **overrides):
+        return super().install(source, destination, shell="/bin/bash", **overrides)
 
 
 class SyncWorkflowTests(ForkFixture):
