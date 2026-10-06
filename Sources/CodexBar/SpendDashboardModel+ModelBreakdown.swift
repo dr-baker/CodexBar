@@ -264,7 +264,11 @@ extension SpendDashboardModel {
     }
 
     private static func hasCompleteModelCostCoverage(_ entry: CostUsageDailyReport.Entry) -> Bool {
-        guard entry.incompleteRequestCount == 0 else { return false }
+        // A merged model's numeric cost can be a subtotal while the day's price gaps remain explicit.
+        guard entry.incompleteRequestCount == 0,
+              entry.coverageCounts.unpriced == 0,
+              entry.coverageCounts.unmetered == 0
+        else { return false }
         var totalCost = 0.0
         var sawNamedBreakdown = false
         for breakdown in entry.modelBreakdowns ?? [] {

@@ -95,6 +95,27 @@ struct MenuCardHeightFingerprintTests {
         #expect(one.heightFingerprint(section: "card") != two.heightFingerprint(section: "card"))
     }
 
+    @Test
+    func `dashboard coverage note changes invalidate cached and tracked row heights`() {
+        var dashboard = InlineUsageDashboardModel(
+            accessibilityLabel: "Cost history",
+            valueStyle: .currencyUSD,
+            kpis: [],
+            points: [],
+            detailLines: [])
+        let initial = Self.model(dashboard: dashboard)
+        dashboard.summaryNote = "Partial cost estimate"
+        let partial = Self.model(dashboard: dashboard)
+        dashboard.summaryNote = "Partial cost estimate · History is still indexing"
+        let indexing = Self.model(dashboard: dashboard)
+
+        #expect(initial.heightFingerprint(section: "card") != partial.heightFingerprint(section: "card"))
+        #expect(partial.heightFingerprint(section: "card") != indexing.heightFingerprint(section: "card"))
+        #expect(!initial.hasCompatibleTrackedLayout(with: partial))
+        #expect(!partial.hasCompatibleTrackedLayout(with: indexing))
+        #expect(partial.hasCompatibleTrackedLayout(with: partial))
+    }
+
     private static func model(
         percent: Double = 42,
         percentStyle: UsageMenuCardView.Model.PercentStyle = .left,
@@ -102,7 +123,8 @@ struct MenuCardHeightFingerprintTests {
         statusText: String? = "Secret status",
         resetText: String? = nil,
         detailLeftText: String? = nil,
-        sessionEquivalentDetail: UsagePaceText.SessionEquivalentDetail? = nil) -> UsageMenuCardView.Model
+        sessionEquivalentDetail: UsagePaceText.SessionEquivalentDetail? = nil,
+        dashboard: InlineUsageDashboardModel? = nil) -> UsageMenuCardView.Model
     {
         UsageMenuCardView.Model(
             provider: .codex,
@@ -128,7 +150,7 @@ struct MenuCardHeightFingerprintTests {
             ],
             usageNotes: ["Secret note"],
             openAIAPIUsage: nil,
-            inlineUsageDashboard: nil,
+            inlineUsageDashboard: dashboard,
             creditsText: nil,
             creditsRemaining: nil,
             creditsProgressPercent: nil,

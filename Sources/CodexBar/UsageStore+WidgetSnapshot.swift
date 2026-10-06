@@ -265,14 +265,9 @@ extension UsageStore {
             return nil
         }
 
-        let dailyUsage = tokenSnapshot?.daily.map { entry in
-            WidgetSnapshot.DailyUsagePoint(
-                dayKey: entry.date,
-                totalTokens: entry.totalTokens,
-                costUSD: entry.costUSD)
-        } ?? []
-
-        let tokenUsage = Self.widgetTokenUsageSummary(from: tokenSnapshot, provider: provider)
+        let dailyUsage = Self.widgetDailyUsagePoints(from: tokenSnapshot)
+        let tokenUsage = Self.widgetTokenUsageSummary(
+            from: tokenSnapshot, provider: provider, calendar: self.settings.costUsageBucketCalendar)
         let usageRows = snapshot.map {
             self.widgetUsageRows(provider: provider, snapshot: $0, now: now)
         } ?? preservedClaudeUsage?.usageRows ?? []
@@ -395,9 +390,23 @@ extension UsageStore {
             quotaOwnerKey: quotaOwnerKey)
     }
 
+    nonisolated static func widgetDailyUsagePoints(
+        from snapshot: CostUsageTokenSnapshot?) -> [WidgetSnapshot.DailyUsagePoint]
+    {
+        guard let snapshot else { return [] }
+        return snapshot.daily.map { entry in
+            WidgetSnapshot.DailyUsagePoint(
+                dayKey: entry.date,
+                totalTokens: entry.totalTokens,
+                costUSD: Self.widgetCompleteCost(
+                    entry.costUSD, entries: [entry], historyIsFullyScanned: snapshot.historyIsFullyScanned))
+        }
+    }
+
     nonisolated static func widgetTokenUsageSummary(
         from snapshot: CostUsageTokenSnapshot?,
-        provider: UsageProvider) -> WidgetSnapshot.TokenUsageSummary?
+        provider: UsageProvider,
+        calendar: Calendar = .current) -> WidgetSnapshot.TokenUsageSummary?
     {
         guard let snapshot else { return nil }
         let fallbackTokens = CheckedSum.integers(snapshot.daily.compactMap(\.totalTokens))
@@ -409,15 +418,45 @@ extension UsageStore {
         let defaultMonthLabel = snapshot.historyDays == 1 ? "Today" : "\(snapshot.historyDays)d"
         let monthLabel = snapshot.historyLabel.map { L($0) } ?? defaultMonthLabel
         let estimateSuffix = provider == .codex ? " API est. · not billed" : ""
+        let usesLatestPrimary = ProviderDescriptorRegistry.descriptor(for: provider).tokenCost
+            .primaryValue == .latestDaily
+        let sessionEntries = usesLatestPrimary
+            ? CostUsageTokenSnapshot.latestEntry(in: snapshot.daily).map { [$0] } ?? []
+            : CostReportingPeriod.rolling(days: 1).entries(snapshot.daily, now: snapshot.updatedAt, calendar: calendar)
         return WidgetSnapshot.TokenUsageSummary(
-            sessionCostUSD: snapshot.sessionCostUSD,
+            sessionCostUSD: Self.widgetCompleteCost(
+                snapshot.sessionCostUSD,
+                entries: sessionEntries,
+                historyIsFullyScanned: snapshot.historyIsFullyScanned),
             sessionTokens: snapshot.sessionTokens,
-            last30DaysCostUSD: snapshot.last30DaysCostUSD,
+            last30DaysCostUSD: Self.widgetCompleteCost(
+                snapshot.last30DaysCostUSD,
+                entries: snapshot.daily,
+                historyIsFullyScanned: snapshot.historyIsFullyScanned),
             last30DaysTokens: snapshot.last30DaysTokens ?? fallbackTokens,
             currencyCode: snapshot.currencyCode,
             sessionLabel: sessionLabel + estimateSuffix,
             last30DaysLabel: monthLabel + estimateSuffix,
             updatedAt: snapshot.updatedAt)
+    }
+
+    /// The widget DTO cannot qualify subtotals, so retain their measured tokens and omit partial money.
+    private nonisolated static func widgetCompleteCost(
+        _ value: Double?,
+        entries: [CostUsageDailyReport.Entry],
+        historyIsFullyScanned: Bool) -> Double?
+    {
+        guard let value, value.isFinite, value >= 0, historyIsFullyScanned,
+              entries.allSatisfy({ entry in
+                  entry.costUSD.map { $0.isFinite && $0 >= 0 } == true
+                      && entry.coverageCounts.unpriced == 0 && entry.coverageCounts.unmetered == 0
+                      && entry.incompleteRequestCount == 0
+                      && (entry.modelBreakdowns ?? []).allSatisfy {
+                          $0.costUSD.map { $0.isFinite && $0 >= 0 } == true
+                      }
+              })
+        else { return nil }
+        return value
     }
 
     private nonisolated static func widgetPrimaryTitle(

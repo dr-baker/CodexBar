@@ -9,6 +9,14 @@ read_when:
 
 Keep the customized app on `dr-baker/CodexBar`'s `main` branch. Use the upstream sync PR to review updates from `steipete/CodexBar` before installing them locally.
 
+## Read the customized menu
+
+Local Codex dollar amounts estimate usage at API rates. They do not represent your subscription bill. A `≥` prefix means the displayed amount is a known subtotal: some prices, usage records, or history are still missing. Missing prices alone do not make measured token counts incomplete.
+
+Purchased credits show the reported balance. A progress bar appears only when the provider supplies a monthly limit.
+
+The fork includes the pricing-recovery and duplicate-record repairs from upstream PRs [#4270](https://github.com/steipete/CodexBar/pull/4270) and [#4290](https://github.com/steipete/CodexBar/pull/4290). Existing history reparses in bounded passes; partial totals remain labeled while that runs. Saved unknown-price markers stay unknown because the cache cannot distinguish lost pricing from intentionally invalidated evidence. Rebuilding the derived cost cache from session logs can recover those amounts; `codexbar cache clear --cost` clears cost caches for every provider.
+
 ## Enable daily sync PRs
 
 1. Land `.github/workflows/fork-sync.yml` on the fork's `main` branch. The daily schedule starts after this change lands.
@@ -53,7 +61,15 @@ Fetch the fork's reviewed `main`, merge it without fast-forwarding, and build:
 	./Scripts/update_fork.sh
 ```
 
-The script refuses local changes, other branches, and remotes that point to different repositories. It builds `CodexBar.app` in the checkout using the existing packaging script. The build uses ad hoc signing, disables the upstream Sparkle feed, and skips the launch smoke check. Ad hoc builds also leave iCloud sync unavailable.
+The script refuses local changes, other branches, and remotes that point to different repositories. It builds `CodexBar.app` using the existing packaging script, disables the upstream Sparkle feed, and skips the launch smoke check.
+
+Updates use your Developer ID Application certificate so macOS privacy grants survive rebuilds. If you have multiple certificates, select one with `APP_IDENTITY`:
+
+```bash
+	APP_IDENTITY='Developer ID Application: Your Name (YOURTEAMID)' ./Scripts/update_fork.sh --install
+```
+
+The script stops before changing Git if no unique certificate is available. Set `CODEXBAR_SIGNING=adhoc` explicitly to build without a certificate. Ad hoc signatures change with each build and can cause repeated permission prompts. Builds signed by a different team from upstream leave iCloud sync unavailable.
 
 To build and install into `~/Applications/CodexBar.app`, run:
 

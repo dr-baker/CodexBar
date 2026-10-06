@@ -639,7 +639,7 @@ struct CodexLocalProjectUsageTests {
     }
 
     @Test
-    func `cached project usage snapshot preserves last complete data when pricing changes`() throws {
+    func `partial cost formula invalidates sidecar while preserving last complete project tokens`() throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }
 
@@ -662,7 +662,10 @@ struct CodexLocalProjectUsageTests {
         var cache = CostUsageCache()
         cache.scanSinceKey = dayKey
         cache.scanUntilKey = dayKey
-        cache.codexPricingKey = "pricing-a"
+        let previousPricingKey = CostUsagePricingKey.codex(modelsDevArtifact: nil, formulaVersion: 4)
+        let currentPricingKey = CostUsageScanner.codexPricingKey(modelsDevArtifact: nil)
+        #expect(previousPricingKey != currentPricingKey)
+        cache.codexPricingKey = previousPricingKey
         cache.roots = CostUsageScanner.codexRootsFingerprint(options: options)
         cache.files[env.root.appendingPathComponent("project.jsonl").path] = self.makeCachedFileUsage(
             dayKey: dayKey,
@@ -676,7 +679,8 @@ struct CodexLocalProjectUsageTests {
             until: day,
             options: options)
         let catalog = CodexThreadCatalogReader.load(options: options)
-        try CodexWorkspaceUsageSidecar(cacheRoot: env.cacheRoot).synchronize(
+        let sidecar = CodexWorkspaceUsageSidecar(cacheRoot: env.cacheRoot)
+        try sidecar.synchronize(
             snapshot: snapshot,
             cache: cache,
             catalog: catalog,
@@ -685,8 +689,20 @@ struct CodexLocalProjectUsageTests {
         #expect(CodexLocalProjectUsageIndexer.cachedSnapshot(now: day, historyDays: 1, options: .init(
             scannerOptions: options)) != nil)
 
-        cache.codexPricingKey = "pricing-b"
+        #expect(sidecar.loadLatestSnapshot(
+            scopeSignature: snapshot.scopeSignature,
+            historyDays: 1,
+            cache: cache,
+            catalog: catalog) != nil)
+
+        cache.codexPricingKey = currentPricingKey
         CostUsageStoreAccess.replace(cacheRoot: env.cacheRoot, cache: cache)
+
+        #expect(sidecar.loadLatestSnapshot(
+            scopeSignature: snapshot.scopeSignature,
+            historyDays: 1,
+            cache: cache,
+            catalog: catalog) == nil)
 
         #expect(CodexLocalProjectUsageIndexer.cachedSnapshot(now: day, historyDays: 1, options: .init(
             scannerOptions: options))?.total.totalTokens == 130)

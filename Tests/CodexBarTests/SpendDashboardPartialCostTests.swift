@@ -372,6 +372,52 @@ struct SpendDashboardPartialCostTests {
         #expect(group.dailyPoints.map(\.cost) == [3, 4])
     }
 
+    @Test(arguments: [nil, 100.0] as [Double?])
+    func `same-model native and Pi subtotals retain price gaps and complete known tokens`(nativeCost: Double?) throws {
+        let native = CostUsageDailyReport(data: [.init(
+            date: "2026-07-15",
+            inputTokens: nil,
+            outputTokens: nil,
+            totalTokens: 399_000_000,
+            requestCount: 1,
+            costUSD: nativeCost,
+            modelsUsed: ["fixture-model"],
+            modelBreakdowns: [.init(
+                modelName: "fixture-model", costUSD: nativeCost, totalTokens: 399_000_000)],
+            unpricedRequestCount: 1)], summary: nil)
+        let pi = CostUsageDailyReport(data: [.init(
+            date: "2026-07-15",
+            inputTokens: nil,
+            outputTokens: nil,
+            totalTokens: 1000,
+            requestCount: 1,
+            costUSD: 2.39,
+            modelsUsed: ["fixture-model"],
+            modelBreakdowns: [.init(modelName: "fixture-model", costUSD: 2.39, totalTokens: 1000)])], summary: nil)
+        let merged = native.merged(with: pi)
+        let expectedCost = (nativeCost ?? 0) + 2.39
+        let group = try Self.group(Self.snapshot(
+            entries: merged.data,
+            last30DaysTokens: 399_001_000,
+            last30DaysCostUSD: expectedCost,
+            costProvenance: .listPriceEstimate))
+
+        #expect(group.totalCost == expectedCost)
+        #expect(group.totalTokens == 399_001_000)
+        #expect(group.hasPartialCost)
+        #expect(!group.hasPartialTokens)
+        #expect(group.models.count == 1)
+        #expect(group.models.first?.totalCost == expectedCost)
+        #expect(group.models.first?.totalTokens == 399_001_000)
+        #expect(group.modelHistoryCompleteness == .incomplete)
+        #expect(group.incompleteModelProviders.contains(.codex))
+        #expect(spendDashboardModelHistoryPresentation(group) == .partial)
+        let provider = try #require(spendDashboardProviderBreakdowns(group).first)
+        #expect(provider.hasPartialModelHistory)
+        #expect(provider.hasPartialCost)
+        #expect(!provider.hasPartialTokens)
+    }
+
     @Test
     func `priced subscription keeps group spend when peers lack prices`() throws {
         let priced = Self.snapshot(

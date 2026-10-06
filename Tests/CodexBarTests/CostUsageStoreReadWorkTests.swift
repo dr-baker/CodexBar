@@ -35,6 +35,7 @@ struct CostUsageStoreReadWorkTests {
             let cachedWork = recorder.snapshot()
             #expect(cached.snapshot == Self.expectedRetainedReadSnapshot(
                 fixture, retainedReport: retainedReport, coverage: !pending || retainedReport))
+            #expect(cached.snapshot.daily.first?.pricedRequestCount == fixture.rowCount)
             #expect(cached.lastRefreshAt == (retainedReport ? nil : fixture.now))
             #expect(cached.staleSnapshotUpdatedAt == (retainedReport ? fixture.now.addingTimeInterval(-60) : nil))
             #expect(cachedWork.usageRowDecodeAttempts == (retainedReport ? 0 : fixture.rowCount))
@@ -59,6 +60,7 @@ struct CostUsageStoreReadWorkTests {
             let work = recorder.snapshot()
             #expect(snapshot == Self.expectedRetainedReadSnapshot(
                 fixture, retainedReport: retainedReport, coverage: !pending))
+            #expect(snapshot.daily.first?.pricedRequestCount == fixture.rowCount)
             #expect(snapshot.projects.isEmpty == retainedReport)
             #expect(snapshot.sessions.isEmpty == retainedReport)
             #expect(snapshot.updatedAt == fixture.now.addingTimeInterval(retainedReport ? -60 : 0))
@@ -869,6 +871,10 @@ struct ReadWorkFixture {
         #expect(result.snapshot.last30DaysTokens == self.rowCount * 13)
         #expect(result.snapshot.sessionTokens == self.rowCount * 13)
         #expect(result.snapshot.daily.count == 1)
+        #expect(result.snapshot.daily.first?.pricedRequestCount == self.rowCount)
+        #expect(result.snapshot.daily.first?.unpricedRequestCount == 0)
+        #expect(result.snapshot.daily.first?.unmeteredRequestCount == 0)
+        #expect(result.snapshot.daily.first?.estimatedRequestCount == 0)
         let cost = try #require(result.snapshot.last30DaysCostUSD)
         #expect(abs(cost - Double(self.rowCount) * 0.001) < 0.000000001)
         if details {

@@ -34,8 +34,10 @@ install_fork_app() (
   set -euo pipefail
   local source_app="$1"
   local applications="$2"
-  local destination="$applications/CodexBar.app"
-  local staging='' backup=''
+  # Apple Bash 3.2 discards function locals before an errexit EXIT trap runs.
+  # Keep cleanup state in this isolated subshell so it survives that unwind.
+  destination="$applications/CodexBar.app"
+  staging='' backup=''
 
   [[ ! -L "$applications" ]] || fail "Refusing a symlinked Applications directory: $applications."
   [[ ! -L "$destination" ]] || fail "Refusing a symlinked app: $destination."
@@ -95,6 +97,35 @@ check_remote() {
   done
 }
 
+resolve_fork_signing_identity() {
+  local requested="${APP_IDENTITY:-}" identities line hash name selected_name='' selected_hash='' matches=0
+  local advice='Set APP_IDENTITY to the certificate full name or SHA-1 hash, or set CODEXBAR_SIGNING=adhoc explicitly.'
+  if ! identities=$(security find-identity -p codesigning -v); then
+    fail "Unable to list valid signing identities. $advice"
+  fi
+  local identity_pattern='^[[:space:]]*[[:digit:]]+\)[[:space:]]+([[:xdigit:]]{40})[[:space:]]+"([^"]+)"[[:space:]]*$'
+  local requested_hash
+  requested_hash=$(printf '%s' "$requested" | tr '[:lower:]' '[:upper:]')
+  while IFS= read -r line; do
+    [[ "$line" =~ $identity_pattern ]] || continue
+    hash="${BASH_REMATCH[1]}"
+    name="${BASH_REMATCH[2]}"
+    if [[ -z "$requested" && "$name" == 'Developer ID Application: '* ]] \
+      || [[ -n "$requested" && ( "$hash" == "$requested_hash" || "$name" == *"$requested"* ) ]]; then
+      selected_name="$name"
+      selected_hash="$hash"
+      matches=$((matches + 1))
+    fi
+  done <<< "$identities"
+  [[ "$matches" == 1 ]] || fail "Signing identity must match exactly one valid certificate (found $matches). $advice"
+  local team_pattern='^Developer ID Application: .+ \(([A-Z0-9]{10})\)$'
+  [[ "$selected_name" =~ $team_pattern ]] || fail "Select a Developer ID Application certificate. $advice"
+  local team="${BASH_REMATCH[1]}"
+  [[ -z "${APP_TEAM_ID:-}" || "$APP_TEAM_ID" == "$team" ]] \
+    || fail 'APP_TEAM_ID does not match the selected signing identity.'
+  printf '%s' "$selected_hash"
+}
+
 main() {
   local install=0
   [[ $# -le 1 ]] || fail 'Usage: Scripts/update_fork.sh [--install]'
@@ -105,6 +136,8 @@ main() {
       printf 'Usage: Scripts/update_fork.sh [--install]\n\n'
       printf 'Fetch fork main, merge without fast-forwarding, and build a local release app.\n'
       printf '%s\n' '--install also replaces ~/Applications/CodexBar.app and saves the previous app.'
+      printf 'Signing uses a Developer ID Application certificate; APP_IDENTITY selects one explicitly.\n'
+      printf 'Set CODEXBAR_SIGNING=adhoc to request ad hoc signing explicitly.\n'
       return 0
       ;;
     *) fail 'Usage: Scripts/update_fork.sh [--install]' ;;
@@ -129,6 +162,12 @@ main() {
     [[ ! -L "$HOME/Applications" && ! -L "$HOME/Applications/CodexBar.app" ]] \
       || fail 'Refusing a symlinked install destination in ~/Applications.'
   fi
+  local signing_mode="${CODEXBAR_SIGNING:-identity}" app_identity=''
+  case "$signing_mode" in
+    identity) app_identity=$(resolve_fork_signing_identity) ;;
+    adhoc) ;;
+    *) fail "Unsupported CODEXBAR_SIGNING: $signing_mode (expected identity or adhoc)." ;;
+  esac
   git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
   if ! git merge --no-ff --no-edit origin/main; then
     if [[ -f "$(git rev-parse --git-path MERGE_HEAD)" ]]; then
@@ -137,7 +176,8 @@ main() {
     fail 'Fork update could not merge cleanly. The merge was aborted; resolve it on a separate branch.'
   fi
 
-  if ! CODEXBAR_SIGNING=adhoc CODEXBAR_SKIP_LAUNCH_SMOKE=1 CODEXBAR_ALLOW_LLDB=0 \
+  if ! CODEXBAR_SIGNING="$signing_mode" APP_IDENTITY="$app_identity" CODEXBAR_DISABLE_UPSTREAM_UPDATES=1 \
+    CODEXBAR_SKIP_LAUNCH_SMOKE=1 CODEXBAR_ALLOW_LLDB=0 \
     "$root/Scripts/package_app.sh" release; then
     fail 'Build failed. The source update remains in main; the installed app was not changed.'
   fi
