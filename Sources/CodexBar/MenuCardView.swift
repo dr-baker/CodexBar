@@ -961,7 +961,7 @@ extension UsageMenuCardView.Model {
             // Provider-specific by design: Only Codex exposes the purchased balance in both credit data sources.
             creditsRepeatExtraUsageBalance: input.provider == .codex && creditsText != nil &&
                 Self.creditsRepeatExtraUsageBalance(credits: input.credits, cost: extraUsageCost),
-            creditsShowProgress: input.credits?.hasWorkspaceBalance != true,
+            creditsShowProgress: creditsProgressPercent != nil,
             creditsProgressPercent: creditsProgressPercent,
             creditsScaleText: creditsScaleText,
             creditsHintText: codexCreditLimitDetail ?? redacted.creditsHintText,
