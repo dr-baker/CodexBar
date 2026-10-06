@@ -190,6 +190,19 @@ final class MenuRowContainerView: NSView, MenuCardHighlighting, MenuCardMeasurin
     private static let selectionCornerRadius: CGFloat = 6
     private static let selectionFadeDuration: CFTimeInterval = 0.06
 
+    override func draw(_ dirtyRect: NSRect) {
+        // Inset cards keep dense data readable while preserving the native menu around them.
+        self.effectiveAppearance.performAsCurrentDrawingAppearance {
+            NSColor.windowBackgroundColor.setFill()
+            NSBezierPath(
+                roundedRect: self.bounds.insetBy(
+                    dx: Self.selectionHorizontalInset,
+                    dy: Self.selectionVerticalInset),
+                xRadius: Self.selectionCornerRadius,
+                yRadius: Self.selectionCornerRadius).fill()
+        }
+    }
+
     override var intrinsicContentSize: NSSize {
         let width = self.frame.width > 0 ? self.frame.width : NSView.noIntrinsicMetric
         return NSSize(width: width, height: self.measuredSize?.height ?? self.hosting.intrinsicContentSize.height)
@@ -288,6 +301,7 @@ final class MenuRowContainerView: NSView, MenuCardHighlighting, MenuCardMeasurin
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        self.needsDisplay = true
         self.refreshTintFilter()
     }
 
