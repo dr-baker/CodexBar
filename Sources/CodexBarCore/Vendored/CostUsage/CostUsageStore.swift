@@ -122,6 +122,7 @@ actor CostUsageStore {
         parserHash: CodexParserHash.value)
     static let cacheGeneration = "sqlite:\(CostUsageStore.schemaVersion)"
     static let compatiblePredecessorParserHashes: Set<String> = [
+        "4a48de5bae16ab15", // Preserve row accounting while normalizing native coverage categories.
         "45d9261af204d4f3", // Fork partial-cost reporting; revision 9 reparses duplicate ledger mirrors.
         "ed735dc27ffa70d9", // 0.72.0 rows and markers survive bounded reparsing; the retained report is dropped.
         "029fe80aa98f27e8", // Revision 7 caches retain history during bounded JSON-fallback reparsing.
@@ -175,6 +176,7 @@ actor CostUsageStore {
         "5f8507161b23757c", // 0.54.2 tokscale parity + priority evidence; persisted row shape unchanged.
     ]
     static let incompatibleRetainedReportPredecessorParserHashes: Set<String> = [
+        "4a48de5bae16ab15",
         "dd19ffa2dcfa8d47",
         "2d17f4981b78d07f",
         "8050a4faf4fddb96",
