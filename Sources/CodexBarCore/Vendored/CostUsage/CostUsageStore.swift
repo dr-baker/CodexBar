@@ -122,6 +122,8 @@ actor CostUsageStore {
         parserHash: CodexParserHash.value)
     static let cacheGeneration = "sqlite:\(CostUsageStore.schemaVersion)"
     static let compatiblePredecessorParserHashes: Set<String> = [
+        "45d9261af204d4f3", // Fork partial-cost reporting; revision 9 reparses duplicate ledger mirrors.
+        "ed735dc27ffa70d9", // 0.72.0 rows and markers survive bounded reparsing; the retained report is dropped.
         "029fe80aa98f27e8", // Revision 7 caches retain history during bounded JSON-fallback reparsing.
         "c61aebb9cf043a72", // Revision 6 ledger caches reparse through the shared ownership router.
         "4a4c4ef34ce6f037", // Request-ledger accounting uses bounded native parser-revision migration.
@@ -176,6 +178,8 @@ actor CostUsageStore {
         "dd19ffa2dcfa8d47",
         "2d17f4981b78d07f",
         "8050a4faf4fddb96",
+        "45d9261af204d4f3",
+        "ed735dc27ffa70d9",
     ]
 
     /// Connections to one canonical database share a serial queue, preserving the single-writer

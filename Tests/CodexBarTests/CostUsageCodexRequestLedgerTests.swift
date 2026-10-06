@@ -4,9 +4,9 @@ import Testing
 
 @Suite(.serialized)
 struct CostUsageCodexRequestLedgerTests {
-    private static let timestampA = "2026-08-29T15:59:00Z"
-    private static let timestampB = "2026-08-29T16:01:00Z"
-    private static let timestampC = "2026-08-29T16:01:05Z"
+    static let timestampA = "2026-08-29T15:59:00Z"
+    static let timestampB = "2026-08-29T16:01:00Z"
+    static let timestampC = "2026-08-29T16:01:05Z"
 
     @Test(arguments: [false, true], [false, true])
     func `request ledger recovers reset counters without counting both formats`(
@@ -652,7 +652,7 @@ struct CostUsageCodexRequestLedgerTests {
         return row
     }
 
-    private static func parse(
+    static func parse(
         _ lines: [[String: Any]],
         env: CostUsageTestEnvironment,
         spacedJSON: Bool = false,
@@ -670,7 +670,7 @@ struct CostUsageCodexRequestLedgerTests {
             fileURL: file, range: .init(since: start, until: end, calendar: calendar))
     }
 
-    private static func header() -> [[String: Any]] {
+    static func header() -> [[String: Any]] {
         [
             ["type": "session_meta", "timestamp": self.timestampA, "payload": ["id": "synthetic-thread"]],
             [
@@ -681,7 +681,14 @@ struct CostUsageCodexRequestLedgerTests {
         ]
     }
 
-    private static func tokens(_ values: [Int]) -> [String: Int] {
+    static func timestamp(_ base: String, plusMilliseconds milliseconds: Int) throws -> String {
+        let formatter = ISO8601DateFormatter()
+        let date = try #require(formatter.date(from: base)).addingTimeInterval(Double(milliseconds) / 1000)
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
+
+    static func tokens(_ values: [Int]) -> [String: Int] {
         [
             "input_tokens": values[0],
             "cached_input_tokens": values[1],
@@ -690,7 +697,7 @@ struct CostUsageCodexRequestLedgerTests {
         ]
     }
 
-    private static func record(
+    static func record(
         id: String,
         owner: String = "synthetic-thread",
         timestamp: String = timestampA,
@@ -705,7 +712,7 @@ struct CostUsageCodexRequestLedgerTests {
         ]]
     }
 
-    private static func legacy(timestamp: String, usage: [Int], total: [Int]) -> [String: Any] {
+    static func legacy(timestamp: String, usage: [Int], total: [Int]) -> [String: Any] {
         ["type": "event_msg", "timestamp": timestamp, "payload": [
             "type": "token_count", "turn_id": "synthetic-turn", "info": [
                 "last_token_usage": self.tokens(usage), "total_token_usage": self.tokens(total),

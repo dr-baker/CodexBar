@@ -3,8 +3,7 @@ import Foundation
 extension CostUsageScanner {
     static func codexRowsWithRetainedPricing(
         _ rows: [CodexUsageRow],
-        source: (
-            pricing: [CodexSourcePricingKey: CodexPricingEvidence]?, offsets: [Int: Int64], target: Int64?),
+        source: (pricing: [CodexSourcePricingKey: CodexPricingEvidence]?, parsed: CodexParseResult, target: Int64?),
         pendingPricing: inout [String: CodexPricingEvidence],
         sessionId: String?,
         priorityTurns: [String: CodexPriorityTurnMetadata]) -> [CodexUsageRow]
@@ -14,7 +13,8 @@ extension CostUsageScanner {
                 rows,
                 pricing: sourcePricing,
                 priorityTurns: priorityTurns,
-                sourceBoundary: (source.offsets, sourcePricing.isEmpty ? nil : source.target))
+                sourceBoundary: (source.parsed.rowSourceEndOffsets, sourcePricing.isEmpty ? nil : source.target),
+                ledgerLegacyKeys: source.parsed.ledgerLegacyPricingKeys)
         }
         return Self.codexRowsWithPricingMetadata(
             rows,
@@ -237,9 +237,15 @@ extension CostUsageScanner {
         else { return nil }
 
         var pricing: [CodexSourcePricingKey: CodexPricingEvidence] = [:]
+        var unpricedKeys: Set<CodexSourcePricingKey> = []
+        var hasUnpricedRow = false
         for row in rows where CostUsageDayRange.isInRange(
             dayKey: row.day, since: range.scanSinceKey, until: range.scanUntilKey)
         {
+            hasUnpricedRow = hasUnpricedRow || row.unpricedTokens != nil
+            if row.unpricedTokens != nil, let key = CodexSourcePricingKey(row) {
+                unpricedKeys.insert(key)
+            }
             guard row.knownCostNanos == nil, row.unpricedTokens == nil,
                   let key = CodexSourcePricingKey(row),
                   let model = row.pricingModel, !model.isEmpty,
@@ -251,14 +257,43 @@ extension CostUsageScanner {
             }
             pricing[key] = evidence
         }
-        return pricing.isEmpty ? nil : pricing
+        // A saved unknown price that shares a key with saved pricing cannot be told apart from it, so the
+        // evidence is conflicting rather than recoverable.
+        if !unpricedKeys.isDisjoint(with: pricing.keys) { return [:] }
+        // Saved unknown prices are evidence too: an empty map keeps them unpriced instead of current-priced.
+        if pricing.isEmpty { return hasUnpricedRow ? [:] : nil }
+        return pricing
+    }
+
+    /// A bounded slice can save a ledger row before the next slice reaches its token_count mirror. Once that
+    /// mirror identifies the replaced legacy row, restore the legacy row's saved pricing to the retained row.
+    static func codexRowsRecoveringLedgerPricing(
+        _ rows: [CodexUsageRow],
+        pricing: [CodexSourcePricingKey: CodexPricingEvidence]?,
+        ledgerLegacyKeys: [Int: CodexSourcePricingKey],
+        priorityTurns: [String: CodexPriorityTurnMetadata]) -> [CodexUsageRow]
+    {
+        guard let pricing, !pricing.isEmpty, !ledgerLegacyKeys.isEmpty else { return rows }
+        return rows.map { row in
+            guard row.knownCostNanos == nil, let unpriced = row.unpricedTokens,
+                  let evidence = row.eventIndex.flatMap({ ledgerLegacyKeys[$0] }).flatMap({ pricing[$0] })
+            else { return row }
+            let (tokens, overflow) = row.input.addingReportingOverflow(row.output)
+            guard unpriced == (overflow ? Int.max : max(1, tokens)) else { return row }
+            var recovered = row
+            recovered.unpricedTokens = nil
+            recovered.pricingModel = evidence.pricingModel
+            recovered.pricingMode = evidence.pricingMode
+            return Self.codexRowsWithPricingMetadata([recovered], priorityTurns: priorityTurns).first ?? row
+        }
     }
 
     static func codexRowsWithSourceRecoveryPricing(
         _ rows: [CodexUsageRow],
         pricing: [CodexSourcePricingKey: CodexPricingEvidence],
         priorityTurns: [String: CodexPriorityTurnMetadata],
-        sourceBoundary: (offsets: [Int: Int64], target: Int64?)) -> [CodexUsageRow]
+        sourceBoundary: (offsets: [Int: Int64], target: Int64?),
+        ledgerLegacyKeys: [Int: CodexSourcePricingKey] = [:]) -> [CodexUsageRow]
     {
         func isAppended(_ row: CodexUsageRow) -> Bool {
             guard let target = sourceBoundary.target, let index = row.eventIndex,
@@ -270,7 +305,9 @@ extension CostUsageScanner {
                 guard let index = row.eventIndex, let offset = sourceBoundary.offsets[index],
                       offset <= target else { return nil }
             }
+            // A request-ledger row has its own timestamp; the replaced legacy row saved the pricing.
             return CodexSourcePricingKey(row).flatMap { pricing[$0] }
+                ?? row.eventIndex.flatMap { ledgerLegacyKeys[$0] }.flatMap { pricing[$0] }
         }
         let classified = rows.map { row in
             guard !isAppended(row), retainedPricing(row) == nil else { return row }
