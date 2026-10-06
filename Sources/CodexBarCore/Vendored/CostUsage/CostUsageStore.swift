@@ -122,6 +122,7 @@ actor CostUsageStore {
         parserHash: CodexParserHash.value)
     static let cacheGeneration = "sqlite:\(CostUsageStore.schemaVersion)"
     static let compatiblePredecessorParserHashes: Set<String> = [
+        "0410c28ea9653979", // Formula generation changes downstream caches; native rows and reports stay compatible.
         "4a48de5bae16ab15", // Preserve row accounting while normalizing native coverage categories.
         "45d9261af204d4f3", // Fork partial-cost reporting; revision 9 reparses duplicate ledger mirrors.
         "ed735dc27ffa70d9", // 0.72.0 rows and markers survive bounded reparsing; the retained report is dropped.
