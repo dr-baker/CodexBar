@@ -59,7 +59,7 @@ struct CostUsageStoreReadWorkTests {
                 scannerOptions: fixture.options)
             let work = recorder.snapshot()
             #expect(snapshot == Self.expectedRetainedReadSnapshot(
-                fixture, retainedReport: retainedReport, coverage: !pending, nativeDaily: true))
+                fixture, retainedReport: retainedReport, coverage: !pending))
             #expect(snapshot.daily.first?.pricedRequestCount == fixture.rowCount)
             #expect(snapshot.projects.isEmpty == retainedReport)
             #expect(snapshot.sessions.isEmpty == retainedReport)
@@ -77,8 +77,7 @@ struct CostUsageStoreReadWorkTests {
     private static func expectedRetainedReadSnapshot(
         _ fixture: ReadWorkFixture,
         retainedReport: Bool,
-        coverage: Bool,
-        nativeDaily: Bool = false) -> CostUsageTokenSnapshot
+        coverage: Bool) -> CostUsageTokenSnapshot
     {
         let full = fixture.fullCachedSnapshot(cache: fixture.canonical)
         return CostUsageTokenSnapshot(
@@ -89,8 +88,7 @@ struct CostUsageStoreReadWorkTests {
             historyDays: 1,
             historyCoverageIsEstablished: coverage,
             costProvenance: .listPriceEstimate,
-            // Cached fetches merge reports and normalize zero coverage categories; the scanner keeps native rows.
-            daily: nativeDaily ? fixture.fullReport(fixture.canonical).data : full.daily,
+            daily: full.daily,
             projects: retainedReport ? [] : full.projects,
             sessions: retainedReport ? [] : full.sessions,
             updatedAt: fixture.now.addingTimeInterval(retainedReport ? -60 : 0))
@@ -874,6 +872,9 @@ struct ReadWorkFixture {
         #expect(result.snapshot.sessionTokens == self.rowCount * 13)
         #expect(result.snapshot.daily.count == 1)
         #expect(result.snapshot.daily.first?.pricedRequestCount == self.rowCount)
+        #expect(result.snapshot.daily.first?.unpricedRequestCount == 0)
+        #expect(result.snapshot.daily.first?.unmeteredRequestCount == 0)
+        #expect(result.snapshot.daily.first?.estimatedRequestCount == 0)
         let cost = try #require(result.snapshot.last30DaysCostUSD)
         #expect(abs(cost - Double(self.rowCount) * 0.001) < 0.000000001)
         if details {

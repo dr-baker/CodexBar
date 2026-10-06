@@ -209,8 +209,9 @@ extension CostUsageScanner {
             costUSD: entryCost,
             modelsUsed: modelNames,
             modelBreakdowns: Self.sortedModelBreakdowns(breakdown),
-            unpricedRequestCount: coverage.unpriced > 0 ? coverage.unpriced : nil,
-            unmeteredRequestCount: unmetered > 0 ? unmetered : nil,
+            unpricedRequestCount: coverage.unpriced,
+            unmeteredRequestCount: unmetered,
+            estimatedRequestCount: 0,
             pricedRequestCount: coverage.priced)
     }
 
