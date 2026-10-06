@@ -21,6 +21,11 @@ UPDATE_SCRIPT = ROOT / "Scripts/update_fork.sh"
 WORKFLOW = ROOT / ".github/workflows/fork-sync.yml"
 REAL_GIT = shutil.which("git")
 REAL_GH = shutil.which("gh")
+DEVELOPER_HASH = "A" * 40
+DEVELOPER_IDENTITY = "Developer ID Application: Fork Fixture (FORKTEAM01)"
+DEVELOPMENT_IDENTITY = "Apple Development: Development Fixture (PERSONID01)"
+DEFAULT_IDENTITIES = (f'  1) {DEVELOPER_HASH} "{DEVELOPER_IDENTITY}"\n'
+                      f'  2) {"B" * 40} "{DEVELOPMENT_IDENTITY}"\n  2 valid identities found\n')
 
 
 def pr_record(owner="dr-baker", repository="CodexBar", number=1):
@@ -90,6 +95,7 @@ class ForkFixture(unittest.TestCase):
         self.bin.mkdir()
         self.git_log = self.directory / "git-log"
         self.gh_log = self.directory / "gh-log"
+        self.security_log = self.directory / "security-log"
         self.env = dict(
             GIT_CONFIG_GLOBAL=os.devnull,
             GIT_CONFIG_NOSYSTEM="1",
@@ -98,6 +104,8 @@ class ForkFixture(unittest.TestCase):
             PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
             TEST_GIT_LOG=str(self.git_log),
             TEST_GH_LOG=str(self.gh_log),
+            TEST_SECURITY_LOG=str(self.security_log),
+            MOCK_IDENTITIES=DEFAULT_IDENTITIES,
             TEST_GH_RESPONSE=str(self.directory / "gh-response.json"),
             GITHUB_REPOSITORY="dr-baker/CodexBar",
             GITHUB_SERVER_URL="https://github.com",
@@ -133,8 +141,9 @@ class ForkFixture(unittest.TestCase):
             "#!/usr/bin/env bash\nset -euo pipefail\n"
             'root=$(cd "$(dirname "$0")/.." && pwd)\n'
             '[[ "$*" == release ]] || exit 99\n'
-            'printf "%s|%s|%s" "$CODEXBAR_SIGNING" "$CODEXBAR_SKIP_LAUNCH_SMOKE" '
-            '"$CODEXBAR_ALLOW_LLDB" > "$root/.package-env"\n'
+            'printf "%s|%s|%s|%s|%s|%s" "$CODEXBAR_SIGNING" "$APP_IDENTITY" "${APP_TEAM_ID:-}" '
+            '"$CODEXBAR_SKIP_LAUNCH_SMOKE" "$CODEXBAR_ALLOW_LLDB" "$CODEXBAR_DISABLE_UPSTREAM_UPDATES" '
+            '> "$root/.package-env"\n'
             '[[ "${MOCK_PACKAGE_FAILURE:-0}" == 0 ]] || exit 24\n'
             'create-app "$root/CodexBar.app"\n'
         )
@@ -203,7 +212,13 @@ class ForkFixture(unittest.TestCase):
             'elif args[:2] not in [["pr", "edit"], ["auth", "setup-git"]]:\n'
             '    sys.exit(99)\n',
         )
-        for name in ("open", "pkill", "security"):
+        self.stub(
+            "security",
+            '#!/bin/bash\n[[ "$*" == "find-identity -p codesigning -v" ]] || exit 99\n'
+            'printf "%s\\n" "$*" >> "$TEST_SECURITY_LOG"\n'
+            'printf "%s" "$MOCK_IDENTITIES"\nexit "${MOCK_SECURITY_EXIT:-0}"\n',
+        )
+        for name in ("open", "pkill"):
             self.stub(name, '#!/bin/bash\necho "Unexpected live command" >&2\nexit 99\n')
 
     def stub(self, name, source):
@@ -237,9 +252,9 @@ class ForkFixture(unittest.TestCase):
         self.git("commit", "-m", "Customize menu")
         return self.git("rev-parse", "HEAD").stdout.strip()
 
-    def update(self, *arguments, overrides=None):
+    def update(self, *arguments, overrides=None, shell="bash"):
         return subprocess.run(
-            ["bash", "Scripts/update_fork.sh", *arguments], cwd=self.repo,
+            [shell, "Scripts/update_fork.sh", *arguments], cwd=self.repo,
             env=dict(self.env, **(overrides or {})), capture_output=True, text=True,
         )
 
@@ -333,7 +348,7 @@ class LocalUpdateTests(ForkFixture):
         self.assertEqual(self.git("show", "-s", "--format=%P", "HEAD").stdout.strip(),
                          f"{local_sha} {fork_sha}")
         self.assertEqual((self.repo / "custom-menu").read_text(), "custom\n")
-        self.assertEqual((self.repo / ".package-env").read_text(), "adhoc|1|0")
+        self.assertEqual((self.repo / ".package-env").read_text(), f"identity|{DEVELOPER_HASH}||1|0|1")
         self.assertIn("Built ", result.stdout)
         self.assertNotIn("Installed ", result.stdout)
 
@@ -396,6 +411,75 @@ class LocalUpdateTests(ForkFixture):
         self.assertIn("installed app was not changed", result.stderr)
         self.git("merge-base", "--is-ancestor", fork_sha, "HEAD")
         self.assertFalse((self.repo / "CodexBar.app").exists())
+
+
+class SigningTests(ForkFixture):
+    def test_default_signing_selects_the_unique_developer_id(self):
+        result = self.update()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.repo / ".package-env").read_text(), f"identity|{DEVELOPER_HASH}||1|0|1")
+        self.assertEqual(self.security_log.read_text(), "find-identity -p codesigning -v\n")
+
+    def test_missing_ambiguous_or_unreadable_certificates_refuse_fetch(self):
+        second_developer = f'  3) {"C" * 40} "Developer ID Application: Other Fixture (OTHERTEAM1)"\n'
+        for label, identities, exit_code in (
+            ("missing", "", "0"),
+            ("development only", f'  1) {"B" * 40} "{DEVELOPMENT_IDENTITY}"\n', "0"),
+            ("ambiguous", DEFAULT_IDENTITIES + second_developer, "0"),
+            ("query failed", DEFAULT_IDENTITIES, "7"),
+        ):
+            with self.subTest(case=label):
+                result = self.update(overrides={"MOCK_IDENTITIES": identities, "MOCK_SECURITY_EXIT": exit_code})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("APP_IDENTITY", result.stderr)
+                self.assertIn("CODEXBAR_SIGNING=adhoc", result.stderr)
+                self.assert_no_fetch()
+                self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), self.base)
+
+    def test_explicit_identity_resolves_by_hash_name_or_substring(self):
+        for identity, team in ((DEVELOPER_IDENTITY, "FORKTEAM01"), (DEVELOPER_HASH, ""),
+                               (DEVELOPER_HASH.lower(), ""), ("Fork Fixture", "")):
+            with self.subTest(identity=identity):
+                result = self.update(overrides={"APP_IDENTITY": identity, "APP_TEAM_ID": team})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((self.repo / ".package-env").read_text(),
+                                 f"identity|{DEVELOPER_HASH}|{team}|1|0|1")
+
+    def test_explicit_missing_ambiguous_or_wrong_team_identity_refuses_fetch(self):
+        for label, identity, team in (
+            ("missing", "Missing certificate", ""),
+            ("ambiguous", "Fixture", ""),
+            ("development", DEVELOPMENT_IDENTITY, ""),
+            ("wrong team", DEVELOPER_IDENTITY, "WRONGTEAM1"),
+        ):
+            with self.subTest(case=label):
+                result = self.update(overrides={"APP_IDENTITY": identity, "APP_TEAM_ID": team})
+                self.assertNotEqual(result.returncode, 0)
+                self.assert_no_fetch()
+                self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), self.base)
+
+    def test_explicit_adhoc_skips_identity_discovery(self):
+        result = self.update(overrides={"CODEXBAR_SIGNING": "adhoc", "APP_IDENTITY": "Missing certificate",
+                                       "MOCK_SECURITY_EXIT": "99", "CODEXBAR_ALLOW_LLDB": "1",
+                                       "CODEXBAR_DISABLE_UPSTREAM_UPDATES": "0"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.repo / ".package-env").read_text(), "adhoc|||1|0|1")
+        self.assertFalse(self.security_log.exists())
+
+    def test_unknown_signing_modes_refuse_fetch(self):
+        for mode in ("automatic", "none", "invalid"):
+            with self.subTest(mode=mode):
+                result = self.update(overrides={"CODEXBAR_SIGNING": mode})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Unsupported CODEXBAR_SIGNING", result.stderr)
+                self.assert_no_fetch()
+                self.assertFalse(self.security_log.exists())
+
+
+@unittest.skipUnless(sys.platform == "darwin", "Apple Bash is available on macOS")
+class AppleBashSigningTests(SigningTests):
+    def update(self, *arguments, **options):
+        return super().update(*arguments, shell="/bin/bash", **options)
 
 
 class InstallTests(ForkFixture):

@@ -269,7 +269,7 @@ if [[ "$LOWER_CONF" == "debug" ]]; then
   FEED_URL=""
   AUTO_CHECKS=false
 fi
-if [[ "$SIGNING_MODE" == "adhoc" ]]; then
+if [[ "$SIGNING_MODE" == "adhoc" || "${CODEXBAR_DISABLE_UPSTREAM_UPDATES:-0}" == "1" ]]; then
   FEED_URL=""
   AUTO_CHECKS=false
 fi
