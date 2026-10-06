@@ -229,7 +229,7 @@ struct ClaudeIncompleteUsagePropagationTests {
             now: Self.now))
         let inline = try #require(model.inlineUsageDashboard)
         #expect(inline.kpis.first?.value == "— · Incomplete")
-        #expect(inline.kpis.first(where: { $0.title == "30d tokens" })?.value == "300 · Incomplete")
+        #expect(inline.kpis.first(where: { $0.title == "30d tokens" })?.value == "≥ 300 · Incomplete")
         #expect(inline.detailLines.contains(where: { $0.contains("Excluded requests with missing final usage: 2") }))
         #expect(!inline.detailLines.contains(where: { $0.contains("Top model") }))
         #expect(inline.detailLines.contains(where: { $0.hasPrefix("Last 7 days:") && $0.contains("Incomplete") }))

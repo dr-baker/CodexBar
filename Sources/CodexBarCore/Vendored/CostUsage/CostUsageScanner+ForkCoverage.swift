@@ -104,6 +104,7 @@ extension CostUsageScanner {
         var breakdown: [CostUsageDailyReport.ModelBreakdown] = []
         var dayCost: Double = 0
         var dayCostSeen = false
+        var coverage = CostUsageCoverageCounts()
 
         for model in modelNames {
             guard OpenCodexRouteDispatcher.countsTowardCodexSubscription(modelName: model) else { continue }
@@ -137,10 +138,13 @@ extension CostUsageScanner {
                 && CheckedSum.integers(rows.map(\.input)) == input
                 && CheckedSum.integers(rows.map(\.cached)) == cached
                 && CheckedSum.integers(rows.map(\.output)) == output
-            let rowCostIsTrusted = !pricing.unresolvedRowGroups.contains(group)
+            let rowTokens = rowCost.flatMap { CheckedSum.integers([$0.standardTokens, $0.priorityTokens]) }
+            let rowAccountingIsTrusted = !pricing.unresolvedRowGroups.contains(group)
                 && !pricing.modeOwnershipMismatchGroups.contains(group)
                 && (authoritativeOverflowCost
-                    || totalTokens.map { rowCost?.isTrusted(canonicalTotalTokens: $0) == true } == true)
+                    || (!rows.isEmpty && rowCost?.hasUnstableTokenRows == false
+                        && rowCost?.hasTokenOverflow == false && totalTokens != nil && rowTokens == totalTokens))
+            let rowCostIsTrusted = rowAccountingIsTrusted && rowCost?.hasIncompletePricing == false
             let aggregateCost = pricing.requestPricingEvidenceGroups.contains(group)
                 || pricing.incompletePricingEvidenceGroups.contains(group)
                 || (pricing.unresolvedRowGroups.contains(group)
@@ -157,9 +161,20 @@ extension CostUsageScanner {
                     modelsDevCacheRoot: pricing.modelsDevCacheRoot,
                     customPricing: pricing.customPricing,
                     pricingResolver: pricing.pricingResolver)
+            // Missing rates do not invalidate canonical ownership of the other requests. Keep
+            // their proven subtotal, using the same row evidence as the timestamped buckets.
+            let pricedRows = rowAccountingIsTrusted ? Self.codexPricedRows(rows: rows, pricing: pricing) : nil
             let cost = rowCostIsTrusted
-                ? rowCost?.totalCostUSD ?? aggregateCost
-                : aggregateCost
+                ? rowCost?.totalCostUSD ?? aggregateCost : pricedRows?.costUSD ?? aggregateCost
+            if let pricedRows {
+                coverage.merge(pricedRows.coverage)
+            } else if let cost, cost.isFinite, cost >= 0 {
+                // Without canonical request boundaries, one known model aggregate is the
+                // conservative coverage unit rather than an invented request count.
+                coverage.priced += 1
+            } else if (totalTokens ?? 1) > 0 {
+                coverage.unpriced += 1
+            }
             let hasModeSplit = rowCostIsTrusted && rowCost?.hasModeSplit == true
             breakdown.append(
                 CostUsageDailyReport.ModelBreakdown(
@@ -194,8 +209,49 @@ extension CostUsageScanner {
             costUSD: entryCost,
             modelsUsed: modelNames,
             modelBreakdowns: Self.sortedModelBreakdowns(breakdown),
-            unpricedRequestCount: entryCost == nil && (dayTotal ?? 1) > 0 ? 1 : nil,
-            unmeteredRequestCount: unmetered > 0 ? unmetered : nil)
+            unpricedRequestCount: coverage.unpriced > 0 ? coverage.unpriced : nil,
+            unmeteredRequestCount: unmetered > 0 ? unmetered : nil,
+            pricedRequestCount: coverage.priced)
+    }
+
+    private struct CodexPricedRows {
+        let costUSD: Double?
+        let coverage: CostUsageCoverageCounts
+    }
+
+    private static func codexPricedRows(
+        rows: [CodexUsageRow],
+        pricing: CodexReportDayPricingContext) -> CodexPricedRows
+    {
+        var subtotal: Double?
+        var costIsValid = true
+        var coverage = CostUsageCoverageCounts()
+        for row in rows {
+            guard row.input > 0 || row.cached > 0 || row.output > 0 || row.knownCostNanos != nil else { continue }
+            let hasUnpricedTokens = (row.unpricedTokens ?? 0) > 0
+            // Explicit dollars survive incomplete token pricing. Estimated dollars require
+            // complete request evidence; the caller has already validated canonical ownership.
+            let resolvedCost = row.knownCostNanos != nil || !hasUnpricedTokens
+                ? Self.codexResolvedCostUSD(
+                    for: row,
+                    priorityTurns: pricing.priorityTurns,
+                    modelsDevCatalog: pricing.modelsDevCatalog,
+                    modelsDevCacheRoot: pricing.modelsDevCacheRoot,
+                    customPricing: pricing.customPricing,
+                    pricingResolver: pricing.pricingResolver) : nil
+            let cost = resolvedCost.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+            if hasUnpricedTokens || cost == nil {
+                coverage.unpriced += 1
+            } else {
+                coverage.priced += 1
+            }
+            if let cost {
+                let sum = (subtotal ?? 0) + cost
+                costIsValid = costIsValid && sum.isFinite
+                subtotal = sum
+            }
+        }
+        return CodexPricedRows(costUSD: costIsValid ? subtotal : nil, coverage: coverage)
     }
 }
 

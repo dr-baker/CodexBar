@@ -482,7 +482,7 @@ struct CostUsageScannerForkSplitTests {
     }
 
     @Test
-    func `exact rows require complete request pricing coverage`() throws {
+    func `exact rows retain priced subtotals and incomplete request coverage`() throws {
         let environment = try CostUsageTestEnvironment()
         defer { environment.cleanup() }
         let day = try environment.makeLocalNoon(year: 2026, month: 9, day: 11)
@@ -519,8 +519,12 @@ struct CostUsageScannerForkSplitTests {
         cache.files = ["/partial-pricing.jsonl": usage]
         cache.days = usage.days
         let report = CostUsageScanner.buildCodexReportFromCache(cache: cache, range: range)
-        #expect(report.data.first?.modelBreakdowns?.first?.costUSD == nil)
-        #expect(report.summary?.totalCostUSD == nil)
+        let expected = try #require(CostUsagePricing.codexCostUSD(
+            model: model, inputTokens: 100_000, cachedInputTokens: 0, outputTokens: 10))
+        #expect(report.data.first?.modelBreakdowns?.first?.costUSD == expected)
+        #expect(report.summary?.totalCostUSD == expected)
+        #expect(report.data.first?.coverageCounts.priced == 1)
+        #expect(report.data.first?.coverageCounts.unpriced == 1)
 
         let authoritativeZero = CostUsageScanner.CodexUsageRow(
             day: dayKey,

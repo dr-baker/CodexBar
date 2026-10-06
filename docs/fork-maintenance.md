@@ -9,6 +9,17 @@ read_when:
 
 Keep the customized app on `dr-baker/CodexBar`'s `main` branch. Use the upstream sync PR to review updates from `steipete/CodexBar` before installing them locally.
 
+## Read the customized menu
+
+Local Codex dollar amounts estimate usage at API rates. They do not represent your subscription bill. A `≥` prefix means the displayed amount is a known subtotal: some prices, usage records, or history are still missing. Missing prices alone do not make measured token counts incomplete.
+
+Purchased credits show the reported balance. A progress bar appears only when the provider supplies a monthly limit.
+
+These native menu screenshots use synthetic data over a busy background to check contrast and coverage labels:
+
+![Dark menu with partial estimates and a reported credit balance](screenshots/codex-fork-menu.png)
+![Light menu with partial estimates and a reported credit balance](screenshots/codex-fork-menu-light.png)
+
 ## Enable daily sync PRs
 
 1. Land `.github/workflows/fork-sync.yml` on the fork's `main` branch. The daily schedule starts after this change lands.
