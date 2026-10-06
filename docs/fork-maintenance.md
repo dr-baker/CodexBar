@@ -61,7 +61,15 @@ Fetch the fork's reviewed `main`, merge it without fast-forwarding, and build:
 	./Scripts/update_fork.sh
 ```
 
-The script refuses local changes, other branches, and remotes that point to different repositories. It builds `CodexBar.app` in the checkout using the existing packaging script. The build uses ad hoc signing, disables the upstream Sparkle feed, and skips the launch smoke check. Ad hoc builds also leave iCloud sync unavailable.
+The script refuses local changes, other branches, and remotes that point to different repositories. It builds `CodexBar.app` using the existing packaging script, disables the upstream Sparkle feed, and skips the launch smoke check.
+
+Updates use your Developer ID Application certificate so macOS privacy grants survive rebuilds. If you have multiple certificates, select one with `APP_IDENTITY`:
+
+```bash
+	APP_IDENTITY='Developer ID Application: Your Name (YOURTEAMID)' ./Scripts/update_fork.sh --install
+```
+
+The script stops before changing Git if no unique certificate is available. Set `CODEXBAR_SIGNING=adhoc` explicitly to build without a certificate. Ad hoc signatures change with each build and can cause repeated permission prompts. Builds signed by a different team from upstream leave iCloud sync unavailable.
 
 To build and install into `~/Applications/CodexBar.app`, run:
 

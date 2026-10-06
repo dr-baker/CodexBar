@@ -99,8 +99,8 @@ if 'resolve_package_signing_identity() {' in source:
     end = source.index('\n}\n', start) + 3
     helper = source[start:end]
 
-for team, configuration, signing, profile_present in itertools.product(
-    ['Y5PE65HELJ', 'TESTTEAM01'], ['release', 'debug'], ['identity', 'adhoc'], [False, True],
+for team, configuration, signing, profile_present, disable_updates in itertools.product(
+    ['Y5PE65HELJ', 'TESTTEAM01'], ['release', 'debug'], ['identity', 'adhoc'], [False, True], ['0', '1'],
 ):
     with tempfile.TemporaryDirectory(prefix='codexbar-entitlement-test-') as directory:
         root = Path(directory)
@@ -113,15 +113,20 @@ for team, configuration, signing, profile_present in itertools.product(
             profile.write_text('synthetic profile selection marker\n')
         env = dict(os.environ, ROOT=str(root), APP=str(app), APP_TEAM_ID=team,
                    LOWER_CONF=configuration, SIGNING_MODE=signing, ALLOW_LLDB='0',
-                   APP_IDENTITY=f'Developer ID Application: Fixture ({team})')
+                   APP_IDENTITY=f'Developer ID Application: Fixture ({team})',
+                   CODEXBAR_DISABLE_UPSTREAM_UPDATES=disable_updates)
         identity_stub = f'security() {{ echo \'  1) {"A" * 40} "{env["APP_IDENTITY"]}"\'; }}'
-        result = subprocess.run(['bash', '-eu', '-c', identity_stub + '\n' + helper + '\n' + generation + '\n' + embedding],
+        update_output = '\nprintf "%s|%s" "$AUTO_CHECKS" "$FEED_URL"\n'
+        result = subprocess.run(['bash', '-eu', '-c', identity_stub + '\n' + helper + '\n' + generation + '\n' + embedding + update_output],
                                 env=env, capture_output=True, text=True)
         cloudkit = team == 'Y5PE65HELJ' and configuration == 'release' and signing == 'identity'
         if cloudkit and not profile_present:
             assert result.returncode != 0 and 'Missing' in result.stderr, result.stderr
             continue
         assert result.returncode == 0, (team, configuration, signing, profile_present, result.stderr)
+        updates_enabled = configuration == 'release' and signing == 'identity' and disable_updates == '0'
+        expected_update_output = 'true|https://raw.githubusercontent.com/steipete/CodexBar/main/appcast.xml' if updates_enabled else 'false|'
+        assert result.stdout == expected_update_output, (team, configuration, signing, disable_updates, result.stdout)
         bundle = 'com.steipete.codexbar' + ('.debug' if configuration == 'debug' else '')
         expected_group = f'{team}.{bundle}'
         app_entitlements = plistlib.loads((root / '.build/entitlements/CodexBar.entitlements').read_bytes())
@@ -139,7 +144,7 @@ for team, configuration, signing, profile_present in itertools.product(
             assert app_entitlements['com.apple.developer.icloud-container-identifiers'] == [f'iCloud.{bundle}']
         else:
             assert set(app_entitlements) == {'com.apple.security.application-groups'}
-print('16 entitlement/profile configuration cases passed.')
+print('32 entitlement/profile/update configuration cases passed.')
 
 # Execute the actual entitlement block against synthetic identity listings only.
 # A direct APP_IDENTITY call must not inherit upstream team-bound resources.
