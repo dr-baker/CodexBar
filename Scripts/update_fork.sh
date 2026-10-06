@@ -34,8 +34,10 @@ install_fork_app() (
   set -euo pipefail
   local source_app="$1"
   local applications="$2"
-  local destination="$applications/CodexBar.app"
-  local staging='' backup=''
+  # Apple Bash 3.2 discards function locals before an errexit EXIT trap runs.
+  # Keep cleanup state in this isolated subshell so it survives that unwind.
+  destination="$applications/CodexBar.app"
+  staging='' backup=''
 
   [[ ! -L "$applications" ]] || fail "Refusing a symlinked Applications directory: $applications."
   [[ ! -L "$destination" ]] || fail "Refusing a symlinked app: $destination."
