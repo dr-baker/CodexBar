@@ -53,8 +53,10 @@ struct CodexForkMenuTests {
             currencyCode: "USD")
         var model = Self.model(dashboard: dashboard)
         model.creditsText = "62500 left"
-        model.creditsProgressPercent = 100
-        model.creditsScaleText = "1K tokens"
+        model.creditsRemaining = 62500
+        model.creditsShowProgress = false
+        model.creditsProgressPercent = nil
+        model.creditsScaleText = nil
         model.limitResetCredits = .init(text: "2 available", items: [
             .init(expiryText: "Expires in 17d 15h", compactExpiryText: "17d 15h"),
             .init(expiryText: "Expires in 24d 13h", compactExpiryText: "24d 13h"),
