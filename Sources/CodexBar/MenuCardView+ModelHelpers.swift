@@ -497,6 +497,7 @@ extension UsageMenuCardView.Model {
             true
         case let (current?, candidate?):
             current.valueStyle == candidate.valueStyle &&
+                current.summaryNote == candidate.summaryNote &&
                 current.kpis.count == candidate.kpis.count &&
                 current.points.count == candidate.points.count &&
                 current.quotaWindows.count == candidate.quotaWindows.count &&
